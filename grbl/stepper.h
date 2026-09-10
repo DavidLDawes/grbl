@@ -35,6 +35,10 @@ void st_wake_up();
 // Immediately disables steppers
 void st_go_idle();
 
+// ISR-safe immediate stepper shutdown, for use from interrupt-level code only. See the
+// comment on its definition in stepper.c for why st_go_idle() itself is not safe there.
+void st_go_idle_isr();
+
 // Generate the step and direction port invert masks.
 void st_generate_step_dir_invert_masks();
 

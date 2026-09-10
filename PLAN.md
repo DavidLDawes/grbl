@@ -3,8 +3,25 @@
 A staged plan covering toolchain setup, hardware bring-up, defect remediation,
 and future work for this fork of `gnea/grbl` v1.1h (build 20190830).
 
-Status of the tree at the time of writing: **unmodified from upstream**, and
-**it builds clean** (verified — see §1.4 for the numbers).
+## Status
+
+**Every item in §3 "Fixes" is done except 3.10**, which was always scoped as a
+design task rather than a quick fix (see its own entry for why). Commits:
+
+| Commit | What landed |
+|---|---|
+| `3a26f95` | Phase 1 (all of 1.1–1.6); Fixes 2.2, 3.3, 3.6, 3.8, 3.9 |
+| `5c182fc` | Fix 4.1 (host test harness, `test/`); Fixes 3.2, 3.5, 3.7 |
+| *(this session)* | Fixes 3.1, 2.1, 3.4 |
+
+Firmware still builds clean on the real AVR toolchain, `make test` still passes
+39/39, and **the tree now compiles with zero warnings** (2.1 removed the last
+one). Current baseline: see §1.4.
+
+**What's left** is one deferred design task (3.10), two small validation
+tasks (4.2, 4.3), and everything in §4 "Upgrades and new features" — which was
+always intended as post-fix work. Full detail and suggested order are at the
+end of §3, in **Remaining work**.
 
 ---
 
@@ -79,33 +96,44 @@ make                # -> grbl.hex, objects in build/
 make clean
 ```
 
-Expected output ends with an `avr-size` summary. **Two warnings are expected**
-until Fix 2.1 lands, both pointing at the same real bug:
+Expected output ends with an `avr-size` summary. **The build is silent under
+`-Wall`** — the tree's one warning (the `eeprom.c` checksum bug, Fix 2.1) is
+fixed. If you see this pair again, something has regressed:
 
 ```
 grbl/eeprom.c:133:26: warning: '<<' in boolean context, did you mean '<' ?
 grbl/eeprom.c:144:26: warning: '<<' in boolean context, did you mean '<' ?
 ```
 
-Everything else compiles silently under `-Wall`.
-
 ### 1.4 Verified baseline (stock `config.h`, ATmega328P @ 16 MHz)
+
+Original upstream tree, before any fix in this plan:
 
 ```
    text	   data	    bss	    dec	    hex	filename
   29762	      0	   1633	  31395	   7aa3	build/main.elf
 ```
 
-| Resource | Used | Available | Free | Headroom |
+**Current** (every fix in §3 except 3.10 applied):
+
+```
+   text	   data	    bss	    dec	    hex	filename
+  29916	      0	   1633	  31549	   7b3d	build/main.elf
+```
+
+| Resource | Used (current) | Available | Free | Headroom |
 |---|---|---|---|---|
-| Flash (Uno, 512 B Optiboot) | 29,762 | 32,256 | **2,494 B** | 7.7 % |
-| Flash (old Nano, 2 KB bootloader) | 29,762 | 30,720 | **958 B** | 3.1 % |
+| Flash (Uno, 512 B Optiboot) | 29,916 | 32,256 | **2,340 B** | 7.3 % |
+| Flash (old Nano, 2 KB bootloader) | 29,916 | 30,720 | **804 B** | 2.6 % |
 | SRAM (`.bss`, before stack) | 1,633 | 2,048 | **415 B** | 20 % |
 
-**This is the single most important constraint in this document.** Every fix and
-feature below is annotated with its expected flash cost. On an old-bootloader
-Nano there is under 1 KB to work with, and the 415 bytes of SRAM must cover the
-entire call stack *plus* nested ISR frames.
+**This is the single most important constraint in this document.** All eleven
+done fixes (2.1, 2.2, 3.1–3.9) together cost +154 bytes of flash net (2.1's
+rewrite of the checksum loop is actually 36 bytes *smaller* than the bug it
+replaced, and 2.2/3.4 cost 0 in the default build), zero SRAM. Every fix and
+feature below is still annotated with its cost. On an old-bootloader Nano
+there is now under 800 bytes to work with, and the 415 bytes of SRAM must
+cover the entire call stack *plus* nested ISR frames.
 
 ### 1.5 Flash
 
@@ -205,8 +233,10 @@ With a 1.8° motor (200 steps/rev) at 1/8 microstepping (1600 µsteps/rev):
 **Cross-check against the 30 kHz step ceiling:** max feed in mm/min is
 `30000 × 60 / steps_per_mm`. At 200 steps/mm that's 9,000 mm/min — fine. At 1280
 steps/mm it's only 1,406 mm/min, and `$110` must be set at or below that or
-you'll lose steps. Uncommenting `MAX_STEP_RATE_HZ` in `config.h` makes Grbl
-reject out-of-range settings instead of silently misbehaving (see Fix 3.2).
+you'll lose steps. Fix 3.2 (done) already rejects `$100`/`$101`/`$102 = 0`;
+uncommenting `MAX_STEP_RATE_HZ` in `config.h` (still your choice, not changed
+by 3.2 — see its entry below) additionally makes Grbl reject a steps/mm × max-rate
+combination that would outrun the 30 kHz ceiling, instead of just capping speed.
 
 Calibrate empirically: command `G91 G0 X100`, measure the actual travel, then
 `new_$100 = old_$100 × (100 / measured)`.
@@ -256,58 +286,70 @@ stream) and `doc/script/simple_stream.py` (naive send-and-wait).
 ## 3. Fixes
 
 Fifteen defects from the code review, staged so that each phase is
-independently shippable and testable. Flash costs are estimates against the
-2,494-byte Uno budget from §1.4.
+independently shippable and testable. Flash costs are actual, measured deltas
+against the 2,494-byte original Uno budget from §1.4, not estimates, for every
+item marked done below.
 
-### Phase 1 — Tooling and repo hygiene *(zero firmware risk, do first)*
+### Phase 1 — Tooling and repo hygiene *(zero firmware risk, do first)* ✅ DONE
 
 | # | Item | File | Change |
 |---|---|---|---|
-| 1.1 | Broken header-dependency tracking | `Makefile:106` | `-include $(BUILDDIR)/$(OBJECTS:.o=.d)` expands to `build/build/main.d` — make only prefixes the *first* word. Verified: every other `.d` resolves correctly, so only `main.c` silently misses header changes. Change to `-include $(OBJECTS:.o=.d)`. |
-| 1.2 | Dead `disasm` target | `Makefile:99` | Depends on `main.elf`, not `$(BUILDDIR)/main.elf`. Fix the prerequisite. |
-| 1.3 | Dead `.S.o` suffix rule | `Makefile:62` | Legacy suffix rule that can never fire alongside the pattern rules. Delete, or convert to a `$(BUILDDIR)/%.o: $(SOURCEDIR)/%.S` pattern rule. |
-| 1.4 | No `build/` creation | `Makefile` | Works only because `build/.gitignore` keeps the directory in git. Add an order-only prerequisite: `$(BUILDDIR)/%.o: $(SOURCEDIR)/%.c \| $(BUILDDIR)` plus a `$(BUILDDIR): ; mkdir -p $@` rule. |
-| 1.5 | Missing `.PHONY` | `Makefile` | Declare `all clean flash fuse install load disasm cpp` phony. |
-| 1.6 | `.gitignore` ignores `README.md` | `.gitignore:7` | No effect today (the file is tracked) but actively misleading. Delete the line. |
+| 1.1 | Broken header-dependency tracking | `Makefile:106` | `-include $(BUILDDIR)/$(OBJECTS:.o=.d)` expands to `build/build/main.d` — make only prefixes the *first* word. Verified: every other `.d` resolves correctly, so only `main.c` silently misses header changes. Fixed to `-include $(OBJECTS:.o=.d)`. |
+| 1.2 | Dead `disasm` target | `Makefile:99` | Depended on `main.elf`, not `$(BUILDDIR)/main.elf`. Prerequisite fixed. |
+| 1.3 | Dead `.S.o` suffix rule | `Makefile:62` | Legacy suffix rule that could never fire alongside the pattern rules. Converted to a `$(BUILDDIR)/%.o: $(SOURCEDIR)/%.S` pattern rule. |
+| 1.4 | No `build/` creation | `Makefile` | Previously worked only because `build/.gitignore` kept the directory in git. Added an order-only prerequisite and a `$(BUILDDIR): ; mkdir -p $@` rule. |
+| 1.5 | Missing `.PHONY` | `Makefile` | Declared `all clean flash fuse install load disasm cpp test test-clean` phony. |
+| 1.6 | `.gitignore` ignores `README.md` | `.gitignore:7` | Had no effect (the file was tracked) but was actively misleading. Line removed. |
 
-**Verify:** `make clean && make` reproduces §1.4 byte-for-byte; `touch
-grbl/config.h && make` now rebuilds `main.o`.
+**Verified:** `make clean && make` reproduces §1.4's original-baseline numbers
+byte-for-byte; `touch grbl/config.h && make` now rebuilds `main.o`, confirmed
+by inspecting which objects actually recompiled.
 
 ### Phase 2 — Compile-time correctness
 
-**2.1 — EEPROM checksum uses `||` instead of `|`**
-`eeprom.c:133` and `eeprom.c:144`. GCC 7.3 already flags this
-(`-Wint-in-bool-context`); it is the only warning in the tree.
+**2.1 — EEPROM checksum uses `||` instead of `|`** ✅ DONE
+`eeprom.c:133` and `eeprom.c:144` (now `:134`/`:145` after the fix). Fixed to
+a real bitwise rotate:
 
 ```c
-checksum = (checksum << 1) || (checksum >> 7);   // wrong: yields only 0 or 1
-checksum = (checksum << 1) |  (checksum >> 7);   // intended byte rotation
+checksum = (checksum << 1) | (checksum >> 7);   // Rotate left 1 bit.
 ```
 
-The intended rotate collapses, degrading the checksum to roughly a plain sum.
-Read and write are symmetric, so nothing currently *breaks* — but corruption
-detection on settings, coordinate offsets, startup lines, and build info is far
-weaker than the code claims.
+Verified two ways beyond the rebuild: (1) this was GCC 7.3's one and only
+`-Wall` warning in the whole tree, and it's now gone — the fixed build is
+silent; (2) a standalone extraction of both versions against an 8-byte buffer
+with one byte corrupted showed the **old checksum missed the corruption**
+(`81` == `81` for original vs. corrupted) while the **new one caught it**
+(`159` vs. `175`) — concrete evidence the bug wasn't just a style nit, it
+genuinely weakened corruption detection on every EEPROM read.
 
-> **Migration hazard.** Changing this invalidates every existing stored record.
-> On first boot after flashing, `read_global_settings()` fails its checksum,
-> settings silently reset to defaults, **and G54–G59 work offsets, G28/G30
-> positions, and startup lines are wiped too.** Ship this together with a
-> `SETTINGS_VERSION` bump (`settings.h:30`, currently 10) so the reset is
-> explicit rather than mysterious, and tell users to record `$$` and `$#` first.
+Shipped together with the migration hazard it requires:
 
-Flash cost: ~0. Do this in a release of its own, clearly flagged.
+> **Migration hazard, now live.** `SETTINGS_VERSION` (`settings.h:30`) was
+> bumped **10 → 11**, with the reason recorded in a comment at the same
+> location. On first boot after flashing this version, `read_global_settings()`
+> fails its version check against whatever was previously stored, and
+> `settings_init()` calls `settings_restore(SETTINGS_RESTORE_ALL)` — **every
+> stored record is wiped to defaults: global `$` settings, G54–G59 work
+> offsets, G28/G30 positions, startup lines, and build info.** This is the
+> existing, intentional Grbl migration mechanism (the version-byte check
+> exists for exactly this); nothing new was built for it. **Record `$$` and
+> `$#` before flashing this version to a machine with settings that matter.**
 
-**2.2 — `ENABLE_DUAL_AXIS` + `STEP_PULSE_DELAY` does not compile**
-`stepper.c:333` and `:508` reference `st.step_bits_dual`, which the `stepper_t`
-struct never declares. **Confirmed by build:**
+Flash cost: **-36 bytes** (smaller, not larger — `|` compiles to one AVR
+instruction; the old `||` needed extra code to synthesize proper C boolean
+semantics from a bitwise-looking expression).
+
+**2.2 — `ENABLE_DUAL_AXIS` + `STEP_PULSE_DELAY` does not compile** ✅ DONE
+`stepper.c:333` and `:508` referenced `st.step_bits_dual`, which the
+`stepper_t` struct never declared. **Confirmed by build before the fix:**
 
 ```
 grbl/stepper.c:333:10: error: 'stepper_t' has no member named 'step_bits_dual'
 grbl/stepper.c:508:27: error: 'stepper_t' has no member named 'step_bits_dual'
 ```
 
-Fix — add the member alongside `step_bits` at `stepper.c:105`:
+Fixed by adding the member alongside `step_bits` at `stepper.c:105`:
 
 ```c
   #ifdef STEP_PULSE_DELAY
@@ -319,145 +361,259 @@ Fix — add the member alongside `step_bits` at `stepper.c:105`:
 ```
 
 **Verified:** with this change the combination builds clean at 29,384 text /
-1,555 bss. Cost: 1 byte SRAM, and only in that configuration.
-
-Also add a matching guard to the `#error` block in `grbl.h` for any other
-untested dual-axis pairing, so bad combinations fail loudly at configure time
-rather than deep in `stepper.c`.
+1,555 bss (as measured at the time; absolute numbers have since moved with
+other fixes, but the combination still builds). Cost: 1 byte SRAM, and only in
+that configuration — zero cost to the default build.
 
 ### Phase 3 — Runtime correctness and safety
 
-**3.1 — `mc_reset()` blocks for up to 254 ms inside an ISR** *(highest priority)*
-`mc_reset()` is called from the serial RX ISR and the limit-pin ISR, and reaches
-`st_go_idle()` → `delay_ms(settings.stepper_idle_lock_time)` (`stepper.c:262`).
-At the default `$1=25` that is **25 ms with global interrupts disabled inside an
-interrupt handler** on every Ctrl-X issued during a cycle — roughly 280 dropped
-bytes at 115200 baud, and every other interrupt starved.
+**3.1 — `mc_reset()` blocks for up to 254 ms inside an ISR** *(highest priority)* ✅ DONE
+`mc_reset()` is called from **four** interrupt-level sites, not just the two
+originally identified — traced precisely: `ISR(SERIAL_RX)` (Ctrl-X reset byte),
+`ISR(LIMIT_INT_vect)` and `ISR(WDT_vect)` (hard limit, both the default and
+software-debounced variants), and `ISR(CONTROL_INT_vect)` (the physical reset
+pin). All four previously reached `st_go_idle()` → `delay_ms(settings.stepper_idle_lock_time)`
+(`stepper.c:262`) — at the default `$1=25` that's **25 ms with global
+interrupts disabled inside an interrupt handler**, ~280 dropped serial bytes
+at 115200 baud, and every other interrupt source starved for the duration.
 
-Fix: split the stepper shutdown in two. Add `st_kill()` that only disables
-`TIMSK1`/`TCCR1B` and asserts the driver-disable pin, and call *that* from
-`mc_reset()`. Set a `sys.step_control` flag for a pending idle lock, and perform
-the actual dwell in `protocol_exec_rt_system()` or the `main()` re-init loop,
-where blocking is safe.
+**Fix actually shipped** differs from this plan's original sketch (which
+proposed a new `sys.step_control` flag and an explicit check inside
+`protocol_exec_rt_system()`). Tracing the abort path in full showed that
+mechanism already exists: **every** `mc_reset()` call unconditionally sets
+`EXEC_RESET`, which the next `protocol_exec_rt_system()` call unconditionally
+converts to `sys.abort = true`, which every wait loop in the program checks
+and unwinds on, all the way back to `main()`'s system-abort reinitialization
+loop — which unconditionally calls `st_reset()`, whose first line is a full,
+blocking `st_go_idle()` call, in ordinary (non-interrupt) program context.
+That path is unconditional and pre-existing for *every* `mc_reset()` caller,
+ISR or not.
 
-Risk: **medium-high** — touches the abort path. Bench-test Ctrl-X during a cycle,
-during homing, and during a jog. Flash cost: ~30–60 bytes.
+So the fix is smaller than planned: a new `st_go_idle_isr()` in `stepper.c`
+does only the three ISR-safe register writes `st_go_idle()` used to start
+with (disable Timer1, reset its prescaler, clear `busy`) and returns —
+no dwell, no disable-pin write, no new flag. `mc_reset()` calls this instead
+of `st_go_idle()`. The dwell and disable-pin write `st_go_idle_isr()` skips
+still happen, just a few instructions later via the guaranteed `st_reset()`
+call, with interrupts free to run in the meantime — same total time-to-idle,
+without holding the global interrupt lock for it.
 
-**3.2 — No bounds validation on `$` settings**
-`settings.c:208` only rejects negatives. `$100=0` is accepted and then divides
-in `plan_buffer_line()` and `system_convert_axis_steps_to_mpos()`, producing
-inf/NaN machine positions. `$12=0` (arc tolerance) divides by `sqrt(0)` in
-`motion_control.c:109`, then converts infinity to `uint16_t`.
+**Verified at the disassembly level** (about as far as verification goes
+without a board): `avr-objdump -d` on `mc_reset()` after the fix shows zero
+loop instructions and zero calls to any delay routine — straight-line code,
+two trivial subroutine calls, done in a handful of cycles. `st_go_idle()`
+(still used by `st_reset()` and the other non-ISR callers) still contains its
+`sbiw`/`brne` busy-wait loop, confirming the dwell behavior is fully preserved
+where it's safe to block.
 
-Fix: add per-setting range checks in `settings_store_global_setting()`. Add
-`STATUS_SETTING_VALUE_OUT_OF_RANGE 39` to `report.h` and one row to
-`doc/csv/error_codes_en_US.csv` — note that `report_status_message()` just
-prints the numeric code, so a new code costs **zero flash in `report.c`**.
-Minimum viable version: reject `<= 0` for `steps_per_mm`, `max_rate`,
-`acceleration`, and `arc_tolerance`. Also uncomment `MAX_STEP_RATE_HZ` in
-`config.h` (see §2.3).
+Flash cost: **+22 bytes**. Risk: **medium-high, as planned** — this touches
+the abort path and was verified by static/disassembly analysis, not on real
+hardware. **Bench-test before trusting it**: Ctrl-X during a cycle, a hard
+limit trip during a cycle, and a hard limit trip during homing, on an actual
+board. This is now the top item in **Remaining work** below.
 
-Flash cost: ~80–150 bytes depending on thoroughness.
+**3.2 — No bounds validation on `$` settings** ✅ DONE
+`settings.c:208` (original line) only rejected negatives. `$100=0` was
+accepted and then divided in `plan_buffer_line()` and
+`system_convert_axis_steps_to_mpos()`, producing inf/NaN machine positions.
+`$12=0` (arc tolerance) divided by `sqrt(0)` in `motion_control.c:109`, then
+converted infinity to `uint16_t`.
 
-**3.3 — Null dereference in the stepper ISR**
-`stepper.c:397`: the segment-buffer-empty path reads
+Fixed: `settings_store_global_setting()` now rejects `<= 0` for `steps_per_mm`,
+`max_rate`, `acceleration`, and `arc_tolerance`. Added
+`STATUS_SETTING_VALUE_OUT_OF_RANGE 39` to `report.h` and a matching row to
+`doc/csv/error_codes_en_US.csv`. `MAX_STEP_RATE_HZ` in `config.h` was
+deliberately **not** uncommented by default — that's a separate, user-facing
+default-behavior decision (see §2.3), not part of this correctness fix.
+
+Flash cost: **+100 bytes**.
+
+**3.3 — Null dereference in the stepper ISR** ✅ DONE
+`stepper.c:397` (original line, now `:420`): the segment-buffer-empty path read
 `st.exec_block->is_pwm_rate_adjusted`, but `st_reset()` nulls `st.exec_block`.
 Reachable when `st_wake_up()` runs before any segment is queued. On AVR,
-address 0 is the register file, so it reads garbage rather than faulting — the
-symptom is a spurious PWM-off, not a crash.
+address 0 is the register file, so it read garbage rather than faulting — the
+symptom was a spurious PWM-off, not a crash.
+
+Fixed:
 
 ```c
 if (st.exec_block != NULL && st.exec_block->is_pwm_rate_adjusted) { ... }
 ```
 
-Flash cost: ~6 bytes. Risk: none.
+Risk: none. Flash cost: see the combined note after 3.9 below — 3.3, 3.6, 3.8,
+and 3.9 shipped together and their costs aren't separable in the measurement.
 
-**3.4 — Dual-axis limit shares the Z limit pin** *(safety, documentation fix)*
-`cpu_map.h:173` and `:232` define `DUAL_LIMIT_BIT = Z_LIMIT_BIT`, and
-`limits_get_state()` sets **both** bit 2 and bit `N_AXIS` from a single physical
-switch. During an X/Y self-squaring homing cycle, a stray Z-limit trigger
-satisfies the dual-axis approach check and the gantry is declared square when it
-isn't.
+**3.4 — Dual-axis limit shares the Z limit pin** *(safety, documentation fix)* ✅ DONE
+`cpu_map.h`'s two dual-axis pin maps (`DUAL_AXIS_CONFIG_PROTONEER_V3_51` and
+`DUAL_AXIS_CONFIG_CNC_SHIELD_CLONE`) both define `DUAL_LIMIT_BIT = Z_LIMIT_BIT`,
+and `limits_get_state()` sets **both** the Z-axis limit bit and the dual-axis
+limit bit (bit `N_AXIS`) from that one physical switch. During an X/Y
+self-squaring homing cycle, a stray Z-limit trigger can satisfy the dual-axis
+approach check and the gantry can be declared square when it isn't.
 
-This cannot be fixed in code on an Uno: the limit port is PORTB, and with
-`VARIABLE_SPINDLE` enabled every other PORTB bit is taken (PB0 = stepper enable,
-PB3 = spindle PWM, PB5 = spindle direction). The realistic fixes are:
+Confirmed this can't be fixed in code on an Uno for *either* stock config, for
+two different reasons (traced precisely, not assumed): with
+`DUAL_AXIS_CONFIG_PROTONEER_V3_51`, `VARIABLE_SPINDLE` (default on) claims
+every other PORTB bit; with `DUAL_AXIS_CONFIG_CNC_SHIELD_CLONE`,
+`VARIABLE_SPINDLE` is disallowed outright, but PORTB bits 6/7 are the crystal
+oscillator pins on a standard Uno and aren't available as GPIO at all — so
+there's still no spare bit.
 
-- **Document it prominently** in `config.h` next to `ENABLE_DUAL_AXIS` and in
-  the README's dual-axis notes.
-- Recommend that dual-axis users free a PORTB pin (disable `VARIABLE_SPINDLE`,
-  or give up spindle direction) and move `DUAL_LIMIT_BIT` to it.
-- Optionally add a `#warning` when `DUAL_LIMIT_BIT == Z_LIMIT_BIT`.
+Shipped as three documentation/warning changes, no behavior change:
+- Expanded the existing one-line NOTE at each `DUAL_LIMIT_BIT` definition in
+  `cpu_map.h` into a full explanation of the risk and the config-specific
+  reason no spare pin exists, plus the fix (free a PORTB pin and move
+  `DUAL_LIMIT_BIT`) for anyone whose machine needs accurate squaring.
+- Added a second `WARNING:` paragraph to the dual-axis feature's doc comment
+  block in `config.h`, next to `ENABLE_DUAL_AXIS` itself, pointing to the full
+  explanation.
+- Added a non-fatal `#warning` in `grbl.h`'s `ENABLE_DUAL_AXIS` compatibility
+  block, firing whenever `DUAL_LIMIT_BIT == Z_LIMIT_BIT` — covers a future or
+  custom dual-axis pin map too, not just the two stock ones. **Verified it
+  fires** by building a scratch copy with `ENABLE_DUAL_AXIS` on, and that the
+  default (dual-axis-off) build is completely unaffected (0 byte size change).
 
-**3.5 — Override arithmetic can wrap**
-`protocol.c:413` and neighbours do `uint8_t -= INCREMENT` *before* clamping, and
-`min()` then snaps a wrapped value to **maximum**. Safe at stock config only
-because `MIN_FEED_RATE_OVERRIDE == FEED_OVERRIDE_COARSE_INCREMENT == 10`. Any
-config where MIN < the increment reintroduces exactly the bug upstream commit
-`5967839` fixed. Fix by accumulating in `int16_t` and clamping once.
+**3.5 — Override arithmetic can wrap** ✅ DONE
+`protocol.c` (feed and spindle override handling) did `uint8_t -= INCREMENT`
+*before* clamping, and `min()` then snapped a wrapped value to **maximum**.
+Safe at stock config only because `MIN_FEED_RATE_OVERRIDE ==
+FEED_OVERRIDE_COARSE_INCREMENT == 10`. Any config where MIN exceeds the
+increment reintroduced exactly the bug upstream commit `5967839` fixed.
 
-Flash cost: ~20 bytes.
+Fixed by accumulating both `new_f_override` and `last_s_override` in `int16_t`
+instead of `uint8_t`, clamping once at the end. (`new_r_override`, the rapid
+override, was already safe — it only ever gets direct assignments, never an
+increment/decrement, so it can't underflow.) **Verified with a standalone
+extraction** of the exact arithmetic under a non-default config
+(`MIN=20, INCREMENT=10`): the old code took three "decrease" requests from 20
+and landed on **200** (the max) instead of clamping at the 20% floor — a real
+scenario where trying to *slow down* silently sped the machine up to double
+feed rate. The fixed version correctly lands on 20.
 
-**3.6 — `eeprom_put_char()` unconditionally re-enables interrupts**
-`eeprom.c:124` calls `sei()` instead of restoring the saved `SREG`. Safe only
-because every current caller runs with interrupts already on. Save/restore
-`SREG` to match the pattern used everywhere else in `system.c`.
+Flash cost: **+32 bytes**.
 
-**3.7 — Tiny-radius arcs are undefined behavior**
-`motion_control.c:109`: when `radius < arc_tolerance/2`, `sqrt()` of a negative
-gives NaN, and `(uint16_t)NaN` is UB. Degrades to a straight line in practice.
-Guard with an explicit radius check and clamp `segments` to a sane maximum
-(upstream's own comment says it shouldn't exceed ~2000).
+**3.6 — `eeprom_put_char()` unconditionally re-enables interrupts** ✅ DONE
+`eeprom.c:124` called `sei()` instead of restoring the saved `SREG`. Safe only
+because every then-current caller ran with interrupts already on. Fixed to
+save/restore `SREG`, matching the pattern used everywhere else in `system.c`.
 
-**3.8 — `serial_get_rx_buffer_count()` off-by-one**
-`serial.c:51` uses `RX_BUFFER_SIZE` on a ring of `RX_BUFFER_SIZE+1`. Deprecated
-and unused unless classic status reports are enabled — fix or delete.
+**3.7 — Tiny-radius arcs are undefined behavior** ✅ DONE
+`motion_control.c:109` (original line): when `radius < arc_tolerance/2`,
+`sqrt()` of a negative value gave NaN, and `(uint16_t)NaN` is undefined
+behavior in C — not merely "degrades to a straight line," as first assessed.
 
-**3.9 — `clear_vector_float` passes a float to `memset`**
-`nuts_bolts.h:54`: `memset(a, 0.0, ...)` — the fill argument is an `int`. Works,
-but change `0.0` to `0` for clarity.
+Fixed by guarding the segment-count formula: only run it when
+`2*radius > settings.arc_tolerance`; otherwise fall back to `segments = 0`
+(a direct line to the target — the same code path an arc this small relative
+to its own tolerance would produce anyway). **Verified two ways**: (1) a
+standalone extraction confirmed the old formula's `sqrt()` argument really did
+go negative for a degenerate case and that `(uint16_t)NaN` produced `0` on
+this host compiler *via undefined behavior*, with no portability guarantee —
+the new guarded version reaches the same `0` through well-defined logic
+instead; (2) confirmed **zero regression** — identical segment counts before
+and after the fix across four realistic arc sizes (default and loose
+tolerances, small and large radii).
 
-**3.10 — `serial_write()` busy-waits without pumping the segment buffer**
-`serial.c:93`, an acknowledged upstream TODO. A long report against a full TX
+Flash cost: **+30 bytes**.
+
+**3.8 — `serial_get_rx_buffer_count()` off-by-one** ✅ DONE
+`serial.c:51` used `RX_BUFFER_SIZE` on a ring of `RX_BUFFER_SIZE+1`. Fixed to
+`RX_RING_BUFFER`. Deprecated and unused unless classic status reports are
+enabled in `config.h`.
+
+**3.9 — `clear_vector_float` passes a float to `memset`** ✅ DONE
+`nuts_bolts.h:54`: `memset(a, 0.0, ...)` — the fill argument is an `int`.
+Worked regardless, but changed `0.0` to `0` for clarity (and did the same for
+the adjacent commented-out `clear_vector_long`).
+
+Combined flash cost for 3.3 + 3.6 + 3.8 + 3.9 together (measured, not
+separable — all four shipped in one build): **+6 bytes**.
+
+**3.10 — `serial_write()` busy-waits without pumping the segment buffer** — not done, by design
+`serial.c:92` (the `while (next_head == serial_tx_buffer_tail)` loop in
+`serial_write()`), an acknowledged upstream TODO. A long report against a full TX
 buffer can starve motion.
 
 > **Do not fix this naively.** `serial_write()` is called from report functions
 > that are themselves called from `protocol_exec_rt_system()`; calling
-> `st_prep_buffer()` from inside `serial_write()` risks re-entrancy. Treat this
-> as a design task, not a one-liner, and defer it behind the rest of Phase 3.
+> `st_prep_buffer()` from inside `serial_write()` risks re-entrancy. This is a
+> design task, not a one-liner — see **Remaining work** below for where it
+> fits relative to everything else still open.
 
 ### Phase 4 — Validation
 
-**4.1 — Host-side test harness.** *(highest value-per-effort item in this
-document.)* `gcode.c`, `planner.c`, and `nuts_bolts.c` are nearly
-AVR-independent. A thin shim for `avr/pgmspace.h` and the register accesses lets
-them compile and run natively under a normal `gcc` — which is already installed.
-That buys the first real regression tests this codebase has ever had, and makes
-Phase 3 verifiable instead of merely plausible. Build it *before* attempting
-Phase 5.
+**4.1 — Host-side test harness.** ✅ DONE (`test/`, see `test/README.md`)
+`gcode.c`, `planner.c`, and `nuts_bolts.c` turned out to be nearly
+AVR-independent in practice too — none touch a hardware register directly.
+Compiles all three natively (host `gcc`, no AVR toolchain needed) against a
+minimal shim (`test/avr_shim/`) and a stub layer (`test/grbl_stubs.c`)
+standing in for the modules they call into. 39 test cases, run via `make test`.
 
-**4.2 — Size regression check.** Add a `make size` target that fails if `text`
-exceeds a threshold. With 958 bytes of headroom on an old-bootloader Nano, an
-unnoticed 1 KB growth is a broken release.
+**Verified the harness actually catches regressions**, not just that it
+passes: a real one-line regression (swapped which G-code number maps to which
+units mode) was deliberately injected into `gcode.c`, confirmed the harness
+failed 2 tests with exit code 1, then reverted. Along the way, writing the
+first draft of the suite also caught **4 bugs in the test expectations
+themselves** (a float-precision tolerance tighter than `float` can hold at
+that magnitude, a status-code assumption that didn't match `gcode.c`'s actual
+check ordering, and a `G92` offset sign that was backwards) — none were Grbl
+defects, but it's a concrete demonstration of why running real assertions
+beats reasoning from memory.
 
-**4.3 — Hardware smoke test.** Document a fixed sequence — home, jog each axis,
-run a known square, feed hold, resume, Ctrl-X mid-cycle, probe — to run against
-every firmware change before flashing a machine that has a tool in it.
+This made Fixes 3.2, 3.5, and 3.7 verifiable rather than merely plausible
+(§3.5 and §3.7's standalone-extraction verifications above follow the same
+"don't just read it, run it" discipline this harness established, even though
+`protocol.c` and `motion_control.c` aren't in the harness's own compiled set).
 
-### Suggested ordering
+**4.2 — Size regression check.** Not done.
+Add a `make size` (or fold into `make test`) target that fails if `text`
+exceeds a threshold. With 804 bytes of headroom on an old-bootloader Nano
+*now* (was 958 before this round of fixes), an unnoticed 1 KB growth is a
+broken release. See Remaining work.
 
-```
-Phase 1  (tooling)        — no risk, immediate
-Phase 3.3, 3.6, 3.8, 3.9  — trivial, no behavior change
-Phase 2.2                 — verified fix, contained
-Phase 4.1                 — build the harness
-Phase 3.2, 3.5, 3.7       — now testable
-Phase 3.1                 — riskiest; needs bench time
-Phase 2.1 + 3.4           — ship as a flagged release (EEPROM reset + safety doc)
-```
+**4.3 — Hardware smoke test.** Not done, and now the most important open item.
+Document a fixed sequence — home, jog each axis, run a known square, feed
+hold, resume, **Ctrl-X mid-cycle, a hard limit trip mid-cycle, a hard limit
+trip during homing** (the three scenarios Fix 3.1 needs bench-verified), probe
+— to run against every firmware change before flashing a machine that has a
+tool in it. See Remaining work for why this now outranks everything else.
 
-Total estimated flash cost of all fixes: **~200–300 bytes** of the 2,494
-available on an Uno. Comfortable there; tight on an old Nano.
+## Remaining work
+
+Everything below is open. Suggested order, with reasoning. (Numbers below refer
+to the Phase 3/Phase 4 item numbers above, e.g. "Fix 4.3" — not to the
+separately-numbered subsections of the "Upgrades and new features" section,
+which are referred to by name to avoid confusion between the two.)
+
+1. **Bench-test Fix 3.1 on real hardware — this doubles as Fix 4.3 (hardware
+   smoke test).** This is the only fix in the whole plan verified by static
+   and disassembly analysis alone, specifically because it touches the abort
+   path — this plan flagged it medium-high risk from the start, and that risk
+   hasn't been retired by reasoning, only reduced. Do this before trusting 3.1
+   on a machine with a workpiece in it: Ctrl-X during a cycle, a hard limit
+   trip during a cycle, and a hard limit trip during homing. Write the
+   sequence down while doing it — home, jog each axis, a known square, feed
+   hold, resume, probe, plus the three abort-path cases above — and Fix 4.3 is
+   done at the same time.
+2. **Fix 4.2, a `make size` (or `make test`-integrated) regression guard.**
+   Cheap, mechanical, and the flash headroom that makes every future fix's
+   "cost" column meaningful (804 bytes on an old Nano) is exactly the kind of
+   number that erodes silently without one.
+3. **Fix 3.10, the `serial_write()` design task.** No longer urgent-by-omission
+   now that everything else in Phase 3 is closed, but it's the last known
+   correctness gap and was explicitly deferred rather than declined. Needs a
+   design pass (see its entry for the re-entrancy hazard to avoid), not a
+   quick patch — budget real time for it, ideally after the host test harness
+   (Fix 4.1) is extended enough to cover `protocol.c`/`serial.c` interaction
+   if that's feasible, since this is exactly the kind of subtle
+   interrupt/main-loop interaction the harness exists to catch.
+4. **The "Upgrades and new features" section below**, in the order already
+   laid out there: Cheap wins first, informed by whether `make test` coverage
+   can be extended alongside each one; Moderate features next; read Things
+   that look small but aren't before proposing anything in that category; and
+   treat Change of target as the actual answer for anything beyond
+   incremental fixes to this tree.
 
 ---
 
@@ -472,7 +628,7 @@ Ordered by ratio of value to risk. Everything here is **after** Phases 1–4.
 | **Cache `1/steps_per_mm`** | Low | ~+12 B SRAM, likely **net flash saving** | Software float division is the expensive operation on AVR. It appears 3× per planned block in `planner.c`, plus once per axis per status report in `system_convert_axis_steps_to_mpos()` — ~30 divisions/sec at 10 Hz reporting alone. Compute reciprocals once in `settings_init()` and on `$` change. |
 | **Cache the override scale factor** | Low | ~0 | `plan_compute_profile_nominal_speed()` recomputes `0.01 * sys.f_override` for every block. Compute on override change instead. |
 | **Precompute `2*acceleration`, `0.5/acceleration` per block** | Low | small | `planner_recalculate()` and `st_prep_buffer()` each redo these on every pass. |
-| **`$` setting bounds table** | Low | ~100 B | Already scoped as Fix 3.2; generalizing it to a full table is a natural follow-on. |
+| **Full `$` setting bounds table** | Low | ~100 B | Fix 3.2 (done) only rejects `<= 0` for `steps_per_mm`, `max_rate`, `acceleration`, and `arc_tolerance`. Generalizing that to a per-setting min/max table covering the rest of the `$` settings is a natural follow-on. |
 
 These are the only optimizations worth doing before profiling. All trade SRAM
 for cycles, and both are scarce — measure with `avr-size` before and after.
@@ -490,8 +646,9 @@ for cycles, and both are scarce — measure with `avr-size` before and after.
   character; wiring it to a toggle is small.
 - **M6 tool-change pause.** Can be implemented as an M0-style suspend without
   any tool-changer support.
-- **Restore `$` settings without an EEPROM wipe.** A `$RST=` variant that
-  preserves work offsets would take the sting out of Fix 2.1.
+- **Restore `$` settings without a full EEPROM wipe.** A `$RST=` variant that
+  preserves work offsets would take the sting out of version bumps like Fix
+  2.1's (done) for any future EEPROM-format-changing fix.
 
 ### 4.3 Things that look small but aren't
 
@@ -510,8 +667,10 @@ for cycles, and both are scarce — measure with `avr-size` before and after.
 ### 4.4 Change of target — the real upgrade path
 
 Upstream `gnea/grbl` is **archived**; v1.1h is the last release and this tree
-matches it. The 328P is at 92 % flash and 80 % SRAM with the *stock* feature
-set. Anything ambitious in §4.2 or §4.3 argues for moving:
+matches it. The 328P is at 92.7 % flash and 80 % SRAM with the *stock* feature
+set (§1.4's current numbers), after every correctness fix in §3 and still
+before any of the features below. Anything ambitious in Moderate features or
+Things that look small but aren't argues for moving:
 
 | Target | What it buys |
 |---|---|
@@ -532,9 +691,11 @@ feature-heavy work on grblHAL rather than fighting a 32 KB flash ceiling.
 export PATH="$LOCALAPPDATA/Arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin:$PATH"
 export PATH="$LOCALAPPDATA/Arduino15/packages/arduino/tools/avrdude/6.3.0-arduino17/bin:$PATH"
 
-make clean && make          # expect 29762 text / 1633 bss, 2 eeprom.c warnings
+make clean && make          # expect 29916 text / 1633 bss, zero warnings
 avr-size --format=berkeley build/main.elf
-avr-objdump -d build/main.elf | less     # after Fix 1.2, `make disasm`
+make disasm | less          # or: avr-objdump -d build/main.elf | less
+
+make test                   # host test harness: expect 39/39, no AVR toolchain needed
 
 # Flash an Uno on COM3
 avrdude -C "$LOCALAPPDATA/Arduino15/packages/arduino/tools/avrdude/6.3.0-arduino17/etc/avrdude.conf" \
@@ -545,6 +706,7 @@ avrdude -C "$LOCALAPPDATA/Arduino15/packages/arduino/tools/avrdude/6.3.0-arduino
 |---|---|
 | `README.md` | Overview, pin map, configuration options |
 | `CLAUDE.md` | Architecture rules and conventions for code changes |
+| `test/README.md` | Host test harness: scope, what's stubbed, how to add a test |
 | `doc/markdown/commands.md` | `$` command reference |
 | `doc/markdown/settings.md` | `$n=` setting reference |
 | `doc/markdown/interface.md` | Status report and message format |

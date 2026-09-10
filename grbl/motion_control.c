@@ -373,6 +373,11 @@ uint8_t mc_probe_cycle(float *target, plan_line_data_t *pl_data, uint8_t parser_
 // is in a motion state. If so, kills the steppers and sets the system alarm to flag position
 // lost, since there was an abrupt uncontrolled deceleration. Called at an interrupt level by
 // realtime abort command and hard limits. So, keep to a minimum.
+// NOTE: Calls st_go_idle_isr(), not st_go_idle() -- the latter can block for up to
+// settings.stepper_idle_lock_time (255 ms max) via delay_ms(), which here would mean blocking
+// with global interrupts disabled inside whatever ISR called mc_reset() (serial RX, hard
+// limit, or control reset pin). See the comment on st_go_idle_isr()'s definition for why the
+// idle-lock dwell it skips still happens safely a moment later regardless.
 void mc_reset()
 {
   // Only this function can set the system reset. Helps prevent multiple kill calls.
@@ -389,10 +394,10 @@ void mc_reset()
     // violated, by which, all bets are off.
     if ((sys.state & (STATE_CYCLE | STATE_HOMING | STATE_JOG)) ||
     		(sys.step_control & (STEP_CONTROL_EXECUTE_HOLD | STEP_CONTROL_EXECUTE_SYS_MOTION))) {
-      if (sys.state == STATE_HOMING) { 
+      if (sys.state == STATE_HOMING) {
         if (!sys_rt_exec_alarm) {system_set_exec_alarm(EXEC_ALARM_HOMING_FAIL_RESET); }
       } else { system_set_exec_alarm(EXEC_ALARM_ABORT_CYCLE); }
-      st_go_idle(); // Force kill steppers. Position has likely been lost.
+      st_go_idle_isr(); // Force kill steppers. Position has likely been lost.
     }
   }
 }

@@ -28,6 +28,49 @@ archived; active development continues in
 
 ---
 
+## This fork
+
+This tree applies eleven correctness fixes on top of upstream v1.1h, plus a
+host-side test harness for the G-code parser and motion planner. Full
+technical detail, verification notes, and what's still open are tracked in
+[`PLAN.md`](PLAN.md).
+
+> **IMPORTANT — read before flashing.** One of the fixes corrected the EEPROM
+> checksum algorithm, which previously could silently miss corrupted data far
+> more often than its design intended. That required bumping the internal
+> settings-format version. **Flashing this firmware wipes your EEPROM on
+> first boot** — global `$` settings, work coordinate offsets (G54–G59),
+> G28/G30 positions, and startup lines all reset to defaults. **Record `$$`
+> and `$#` before upgrading** if those values matter to you.
+
+Highlights — all bug fixes, not new features; behavior for a correctly
+configured machine is unchanged:
+
+- Fixed the EEPROM checksum (see the warning above).
+- Fixed `mc_reset()` — triggered by Ctrl-X, a hard limit trip, or the physical
+  reset pin — blocking for up to 255 ms with global interrupts disabled on
+  every abort, which could drop incoming serial bytes and starve every other
+  interrupt for the duration.
+- `$` settings now reject zero or negative steps/mm, max rate, acceleration,
+  and arc tolerance, which previously produced NaN/infinite machine positions.
+- Fixed feed/spindle override percentage arithmetic that could snap to
+  maximum instead of clamping at the intended minimum, in any configuration
+  where the override floor exceeds the adjustment increment.
+- Fixed undefined behavior in the segment-count calculation for very
+  small-radius arcs.
+- `ENABLE_DUAL_AXIS` combined with `STEP_PULSE_DELAY` now actually compiles.
+- Several smaller correctness fixes — see [`PLAN.md`](PLAN.md) for the
+  complete list with file/line references.
+
+One known limitation is **documented, not fixed** — it can't be fixed in
+firmware on a stock Uno: dual-axis self-squaring homing shares its limit
+input with the Z-axis limit pin, because no spare port bit exists once the
+default pin map is accounted for. See the `ENABLE_DUAL_AXIS` warning in
+`grbl/config.h` and the `DUAL_LIMIT_BIT` comment in `grbl/cpu_map.h` before
+relying on dual-axis squaring accuracy.
+
+---
+
 ## Quick start
 
 ### Option A — Arduino IDE (recommended for most users)
@@ -55,6 +98,11 @@ make DEVICE=atmega328p PROGRAMMER="-c avrisp2 -P usb" flash
 
 `DEVICE` and `PROGRAMMER` are overridable on the command line; `CLOCK` is fixed
 at 16 MHz. `make install` runs `flash` followed by `fuse`.
+
+Contributing a change to `gcode.c`, `planner.c`, or `nuts_bolts.c`? Run
+`make test` — a host-side test harness (no AVR toolchain or board needed) that
+compiles those files natively and runs real assertions against them. See
+[`test/README.md`](test/README.md).
 
 ### Talking to it
 
@@ -87,8 +135,10 @@ Z limit sits on **D12** because `VARIABLE_SPINDLE` (enabled by default) needs
 D11's hardware PWM. Disabling variable spindle moves Z limit back to D11.
 Enabling `ENABLE_SAFETY_DOOR_INPUT_PIN` repurposes A1 — the feed-hold input and
 the safety-door input share that pin and cannot both be used. Enabling
-`ENABLE_DUAL_AXIS` reassigns several pins; see `grbl/cpu_map.h` for the exact
-map of each configuration.
+`ENABLE_DUAL_AXIS` reassigns several pins — see `grbl/cpu_map.h` for the exact
+map of each configuration, and **[This fork](#this-fork) above for a
+dual-axis limit-pin safety note** before relying on self-squaring homing
+accuracy.
 
 ---
 
@@ -109,8 +159,11 @@ doc/
   csv/           Machine-readable error, alarm, setting, and build-option tables
   script/        Python streaming and spindle-calibration scripts
   log/           Historical commit logs, v0.7 through v1.1
-Makefile       Command-line build
+test/          Host-side test harness for gcode.c/planner.c/nuts_bolts.c — `make test`
+Makefile       Command-line build (also: `make test`, `make disasm`)
 build/         Build output (gitignored)
+PLAN.md        Fix/feature backlog and status — what's done, what's open
+CLAUDE.md      Architecture notes and conventions for contributors
 ```
 
 Firmware architecture, in one line:
@@ -130,8 +183,11 @@ Behavior is set two ways:
 
 **`$` settings** (stored in EEPROM, changeable at runtime) cover steps/mm, max
 rates, accelerations, travel limits, homing, spindle RPM range, and the various
-invert masks. See [`doc/markdown/settings.md`](doc/markdown/settings.md) and
-[`doc/csv/setting_codes_en_US.csv`](doc/csv/setting_codes_en_US.csv).
+invert masks. Zero or negative steps/mm, max rate, acceleration, and arc
+tolerance are rejected (`error:39`) rather than silently accepted. See
+[`doc/markdown/settings.md`](doc/markdown/settings.md) and
+[`doc/csv/setting_codes_en_US.csv`](doc/csv/setting_codes_en_US.csv) /
+[`error_codes_en_US.csv`](doc/csv/error_codes_en_US.csv).
 
 **Compile-time options** in `grbl/config.h` control features that cost flash or
 change the pin map, including:

@@ -249,6 +249,26 @@ void st_wake_up()
 }
 
 
+// ISR-safe stepper shutdown. Immediately stops step pulse generation (disables the Timer1
+// stepper interrupt) but does none of st_go_idle()'s idle-lock dwell or stepper-disable pin
+// write, both of which can block for up to settings.stepper_idle_lock_time (255 ms max) via
+// delay_ms(). Call this, never st_go_idle(), from interrupt-level code.
+// NOTE: Only mc_reset() needs this. Every mc_reset() call -- from any context, interrupt or
+// not -- unconditionally sets EXEC_RESET, which the next protocol_exec_rt_system() call
+// converts to sys.abort = true, which every wait loop in the program checks and unwinds on,
+// all the way back to main()'s system-abort reinitialization loop. That loop unconditionally
+// calls st_reset(), whose first line is a full st_go_idle() call, in ordinary (non-interrupt)
+// program context where blocking is safe. So the idle-lock dwell and disable-pin write this
+// function skips still happen -- just moments later, with interrupts free to run until then,
+// rather than synchronously inside whatever ISR called mc_reset().
+void st_go_idle_isr()
+{
+  TIMSK1 &= ~(1<<OCIE1A); // Disable Timer1 interrupt
+  TCCR1B = (TCCR1B & ~((1<<CS12) | (1<<CS11))) | (1<<CS10); // Reset clock to no prescaling.
+  busy = false;
+}
+
+
 // Stepper shutdown
 void st_go_idle()
 {

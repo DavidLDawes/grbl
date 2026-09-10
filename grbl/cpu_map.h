@@ -170,6 +170,14 @@
 
       // NOTE: Dual axis limit is shared with the z-axis limit pin by default. Pin used must be on the same port
       // as other limit pins.
+      // SAFETY: This is not two switches on separate inputs -- DUAL_LIMIT_BIT and Z_LIMIT_BIT are literally
+      // the same physical pin, because VARIABLE_SPINDLE (the default) already claims every other PORTB bit
+      // (stepper enable, spindle PWM, spindle direction). limits_get_state() (limits.c) sets both the Z-axis
+      // limit bit and the dual-axis limit bit from this one switch trigger, so a Z-limit trip is
+      // indistinguishable from the dual-axis motor's own limit trip. During self-squaring X/Y homing
+      // (limits_go_home() in limits.c), this means the dual-axis approach check can be fooled by an
+      // unrelated Z-limit trigger. If squaring accuracy matters for your machine, free a PORTB bit (e.g.
+      // disable VARIABLE_SPINDLE, or give up spindle direction control) and move DUAL_LIMIT_BIT there instead.
       #define DUAL_LIMIT_BIT    Z_LIMIT_BIT
       #define LIMIT_MASK        ((1<<X_LIMIT_BIT)|(1<<Y_LIMIT_BIT)|(1<<Z_LIMIT_BIT)|(1<<DUAL_LIMIT_BIT))
 
@@ -229,6 +237,10 @@
       #define DIRECTION_MASK_DUAL ((1<<DUAL_DIRECTION_BIT))
 
       // NOTE: Dual axis limit is shared with the z-axis limit pin by default.
+      // SAFETY: Same DUAL_LIMIT_BIT/Z_LIMIT_BIT aliasing as the PROTONEER_V3_51 config above -- see that
+      // block's comment for the full explanation of the risk. VARIABLE_SPINDLE isn't the constraint for
+      // this shield (it's disallowed here regardless): PORTB bits 6/7 are the crystal oscillator pins on
+      // a standard Uno and aren't available as GPIO, so there's still no spare PORTB bit to move this to.
       #define DUAL_LIMIT_BIT    Z_LIMIT_BIT
       #define LIMIT_MASK        ((1<<X_LIMIT_BIT)|(1<<Y_LIMIT_BIT)|(1<<Z_LIMIT_BIT)|(1<<DUAL_LIMIT_BIT))
 

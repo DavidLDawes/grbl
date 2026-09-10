@@ -631,8 +631,16 @@
 
   WARNING: Make sure to test the directions of your dual axis motors! They must be setup
   to move the same direction BEFORE running your first homing cycle or any long motion!
-  Motors moving in opposite directions can cause serious damage to your machine! Use this 
+  Motors moving in opposite directions can cause serious damage to your machine! Use this
   dual axis feature at your own risk.
+
+  WARNING: On both supported shields (see DUAL_AXIS_CONFIG_* below), the dual-axis limit
+  input is not a separate physical pin -- it is the Z-axis limit pin, aliased via
+  DUAL_LIMIT_BIT in cpu_map.h. There is no spare port bit left to give it its own input on
+  a stock Uno. This means a Z-limit trip and a dual-axis-motor limit trip are indistinguishable
+  to firmware, which can affect the self-squaring homing cycle's approach check. See the
+  DUAL_LIMIT_BIT comment in cpu_map.h for the full explanation and how to free a pin if your
+  machine's squaring accuracy depends on it.
 */
 // NOTE: This feature requires approximately 400 bytes of flash. Certain configurations can
 // run out of flash to fit on an Arduino 328p/Uno. Only X and Y axes are supported. Variable

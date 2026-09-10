@@ -6,10 +6,16 @@ Guidance for Claude Code when working in this repository.
 
 Grbl v1.1h (build 20190830) — a G-code interpreter and real-time stepper motion
 controller for the ATmega328P (Arduino Uno/Nano/Duemilanove/Micro). Bare-metal
-AVR C, no RTOS, no dynamic allocation. This repo is a fork of `gnea/grbl` at
-upstream master; upstream is archived and this tree currently has **no local
-divergence** from it. Version strings live in `grbl/grbl.h`
-(`GRBL_VERSION`, `GRBL_VERSION_BUILD`).
+AVR C, no RTOS, no dynamic allocation. This repo is a fork of `gnea/grbl`;
+upstream is archived. **This tree now has local divergence** — eleven
+correctness fixes plus a host-side test harness, all tracked in `PLAN.md`
+(read its `## Status` section first for what's done vs. still open). Version
+strings live in `grbl/grbl.h` (`GRBL_VERSION`, `GRBL_VERSION_BUILD`) and were
+deliberately left at `1.1h`/`20190830` — the fixes are bug fixes, not new
+features or protocol changes, so nothing about wire-format compatibility with
+existing senders/GUIs changed. `SETTINGS_VERSION` in `settings.h`, by
+contrast, **was** bumped (10 → 11, see Gotchas) — that's a separate
+EEPROM-schema version, not the firmware version.
 
 The 328P has 32 KB flash / 2 KB SRAM and the stock build uses nearly all of
 both. **Flash and SRAM are the binding constraints on every change here.**
@@ -18,16 +24,25 @@ Adding a feature usually means finding something to remove.
 ## Build
 
 Requires the AVR toolchain (`avr-gcc`, `avr-objcopy`, `avr-size`, `avrdude`).
-**Neither `avr-gcc` nor `avrdude` is installed in this environment**, so you
-cannot compile or flash from here — reason about changes by reading, and say so
-rather than claiming a build passed.
+**It's already installed on this machine**, bundled with the Arduino IDE's AVR
+core — not on `PATH` by default, so add it per-session:
 
 ```sh
+export PATH="$LOCALAPPDATA/Arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin:$PATH"
+export PATH="$LOCALAPPDATA/Arduino15/packages/arduino/tools/avrdude/6.3.0-arduino17/bin:$PATH"
+
 make                       # -> grbl.hex  (objects land in build/)
 make clean
 make flash                 # avrdude, needs PROGRAMMER=... DEVICE=...
 make DEVICE=atmega328p PROGRAMMER="-c avrisp2 -P usb" flash
 ```
+
+If those paths don't exist on a given machine, say so plainly and reason about
+changes by reading instead of claiming a build passed — don't assume the
+absence of one specific install means no toolchain exists anywhere; check
+before concluding that. See `PLAN.md` §1 for the full toolchain story
+(installed-vs-fresh-install paths, version notes) and exact current build
+numbers.
 
 The Makefile is a hand-rolled prototype, not generated. `CLOCK` is fixed at
 16 MHz; `-Os -flto -ffunction-sections` plus `-Wl,--gc-sections` are load-bearing
@@ -57,6 +72,8 @@ Most users build via the Arduino IDE instead, using
 | `doc/markdown/` | Interface, settings, jogging, laser-mode specs |
 | `doc/csv/` | Machine-readable error/alarm/setting/build-option code tables |
 | `doc/script/` | Python streaming scripts (`stream.py`, `simple_stream.py`) |
+| `test/` | Host-side test harness (`make test`) — see `test/README.md` and the Testing section below |
+| `PLAN.md` | Fix/feature backlog with status tracking — check `## Status` before starting new work |
 
 `grbl/grbl.h` is the single include hub — every `.c` includes only `"grbl.h"`,
 and the include order inside it is order-dependent. Do not reorder it.
@@ -85,6 +102,18 @@ and the include order inside it is order-dependent. Do not reorder it.
 6. `N_AXIS` is 3 and is *not* a free parameter — `get_step_pin_mask()`,
    `get_direction_pin_mask()`, and `get_limit_pin_mask()` in `settings.c` are
    hardcoded for X/Y/Z, and the stepper ISR unrolls `counter_x/y/z` by hand.
+7. **Never call `st_go_idle()` from interrupt-level code.** It can block for
+   up to 255 ms via `delay_ms(settings.stepper_idle_lock_time)`. From an ISR
+   (or anything called from one), call `st_go_idle_isr()` instead — it does
+   only the ISR-safe part (stop Timer1, reset its prescaler, clear `busy`)
+   and returns immediately. This is safe specifically because every call path
+   that reaches it is guaranteed a follow-up `st_reset()` call (which *does*
+   call the full `st_go_idle()`) from `main()`'s abort-reinitialization loop,
+   in ordinary non-interrupt context, a few instructions later — see the
+   comment on `st_go_idle_isr()`'s definition in `stepper.c` for the traced
+   proof. `mc_reset()` is the only current caller; if you add a new
+   interrupt-level path that needs to stop the steppers, use
+   `st_go_idle_isr()`, not `st_go_idle()`.
 
 ## Conventions
 
@@ -126,14 +155,20 @@ Do not claim behavior is verified unless it actually was.
 
 ## Gotchas
 
-- The root `.gitignore` lists `README.md`. It has no effect (the file is already
-  tracked) but it is wrong and confusing.
-- The Makefile's `-include $(BUILDDIR)/$(OBJECTS:.o=.d)` only prefixes the *first*
-  word, so it looks for `build/build/main.d` — header-dependency tracking is
-  silently broken for `main.c`. `make clean` after touching any header.
-- The `disasm:` target depends on `main.elf`, not `$(BUILDDIR)/main.elf`, and
-  does not work.
 - `$` settings writes call `eeprom_put_char()`, which busy-waits with interrupts
   disabled for ~3.4 ms per byte. Anything that writes EEPROM mid-stream (G10 L2,
   G28.1, G30.1) will drop incoming serial bytes.
-- Changing `SETTINGS_VERSION` in `settings.h` wipes users' EEPROM on next boot.
+- `SETTINGS_VERSION` (`settings.h`) is currently **11**. Bumping it wipes every
+  user's EEPROM on next boot — global `$` settings, work coordinate offsets,
+  G28/G30 positions, startup lines, all reset to defaults — so bump it only
+  alongside an EEPROM-format-changing fix (as `eeprom.c`'s
+  `memcpy_to/from_eeprom_with_checksum()` change required, taking it 10 → 11),
+  never casually. Record the reason in a comment at the `#define`, matching the
+  existing v11 note.
+- The dual-axis feature's `DUAL_LIMIT_BIT` is aliased to `Z_LIMIT_BIT` in
+  `cpu_map.h` for both stock shield configs — there's no spare port bit to give
+  it its own input on a stock Uno (see the comment at each `DUAL_LIMIT_BIT`
+  definition for the config-specific reason why). `limits_get_state()` can't
+  tell a Z-limit trip from a dual-axis-motor limit trip apart. This is flagged
+  with a `#warning` when `ENABLE_DUAL_AXIS` is on, but is not fixable in
+  software — don't attempt to "fix" it without freeing a physical pin first.

@@ -133,6 +133,17 @@
   #if defined(ENABLE_M7)
     #error "ENABLE_M7 not supported with dual axis feature."
   #endif
+  #if defined(DUAL_LIMIT_BIT) && (DUAL_LIMIT_BIT == Z_LIMIT_BIT)
+    // Not a #error: both stock dual-axis pin maps alias the dual-axis limit input to the
+    // Z-axis limit pin (see the NOTE next to DUAL_LIMIT_BIT in cpu_map.h for why -- there's
+    // no spare PORTB bit left on the 328p once VARIABLE_SPINDLE claims the rest). This is a
+    // known, working default, not a defect to silently accept without the builder seeing it:
+    // it means limits_get_state() cannot distinguish a Z-limit trip from a dual-axis-motor
+    // limit trip, which can affect the self-squaring homing cycle's approach check. See
+    // CLAUDE.md and README.md for the full explanation and the fix (move DUAL_LIMIT_BIT to a
+    // free port bit) if squaring accuracy matters for your machine.
+    #warning "DUAL_LIMIT_BIT aliases Z_LIMIT_BIT -- see the NOTE in cpu_map.h before relying on dual-axis homing squaring accuracy."
+  #endif
 #endif
 
 // ---------------------------------------------------------------------------------------

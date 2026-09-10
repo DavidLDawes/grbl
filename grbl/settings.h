@@ -27,7 +27,13 @@
 
 // Version of the EEPROM data. Will be used to migrate existing data from older versions of Grbl
 // when firmware is upgraded. Always stored in byte 0 of eeprom
-#define SETTINGS_VERSION 10  // NOTE: Check settings_reset() when moving to next version.
+#define SETTINGS_VERSION 11  // NOTE: Check settings_restore() when moving to next version.
+// v11: Fixed the EEPROM checksum rotate (memcpy_to/from_eeprom_with_checksum() in eeprom.c
+// used || instead of |, collapsing the intended byte rotation to roughly a plain sum). This
+// version bump forces every stored record -- global settings, work coordinate offsets,
+// G28/G30 positions, startup lines, and build info -- to be reset to defaults on first boot,
+// since the old checksum format is incompatible with the fixed one. Back up `$$` and `$#`
+// before upgrading if those values matter.
 
 // Define bit flag masks for the boolean settings in settings.flag.
 #define BIT_REPORT_INCHES      0
