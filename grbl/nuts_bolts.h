@@ -51,8 +51,8 @@
 
 // Useful macros
 #define clear_vector(a) memset(a, 0, sizeof(a))
-#define clear_vector_float(a) memset(a, 0.0, sizeof(float)*N_AXIS)
-// #define clear_vector_long(a) memset(a, 0.0, sizeof(long)*N_AXIS)
+#define clear_vector_float(a) memset(a, 0, sizeof(float)*N_AXIS)
+// #define clear_vector_long(a) memset(a, 0, sizeof(long)*N_AXIS)
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 #define min(a,b) (((a) < (b)) ? (a) : (b))
 #define isequal_position_vector(a,b) !(memcmp(a, b, sizeof(float)*N_AXIS))

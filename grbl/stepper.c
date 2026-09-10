@@ -103,6 +103,9 @@ typedef struct {
            counter_z;
   #ifdef STEP_PULSE_DELAY
     uint8_t step_bits;  // Stores out_bits output to complete the step pulse delay
+    #ifdef ENABLE_DUAL_AXIS
+      uint8_t step_bits_dual;
+    #endif
   #endif
 
   uint8_t execute_step;     // Flags step execution for each interrupt.
@@ -394,7 +397,7 @@ ISR(TIMER1_COMPA_vect)
       st_go_idle();
       #ifdef VARIABLE_SPINDLE
         // Ensure pwm is set properly upon completion of rate-controlled motion.
-        if (st.exec_block->is_pwm_rate_adjusted) { spindle_set_speed(SPINDLE_PWM_OFF_VALUE); }
+        if (st.exec_block != NULL && st.exec_block->is_pwm_rate_adjusted) { spindle_set_speed(SPINDLE_PWM_OFF_VALUE); }
       #endif
       system_set_exec_state_flag(EXEC_CYCLE_STOP); // Flag main program for cycle end
       return; // Nothing to do but exit.

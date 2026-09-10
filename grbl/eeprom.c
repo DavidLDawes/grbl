@@ -76,8 +76,9 @@ void eeprom_put_char( unsigned int addr, unsigned char new_value )
 	char old_value; // Old EEPROM value.
 	char diff_mask; // Difference mask, i.e. old value XOR new value.
 
+	unsigned char sreg = SREG; // Save interrupt flag state.
 	cli(); // Ensure atomic operation for the write operation.
-	
+
 	do {} while( EECR & (1<<EEPE) ); // Wait for completion of previous write.
 	#ifndef EEPROM_IGNORE_SELFPROG
 	do {} while( SPMCSR & (1<<SELFPRGEN) ); // Wait for completion of SPM.
@@ -121,7 +122,7 @@ void eeprom_put_char( unsigned int addr, unsigned char new_value )
 		}
 	}
 	
-	sei(); // Restore interrupt flag state.
+	SREG = sreg; // Restore interrupt flag state.
 }
 
 // Extensions added as part of Grbl 

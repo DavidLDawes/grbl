@@ -52,14 +52,19 @@ COMPILE = avr-gcc -Wall -Os -DF_CPU=$(CLOCK) -mmcu=$(DEVICE) -I. -ffunction-sect
 
 OBJECTS = $(addprefix $(BUILDDIR)/,$(notdir $(SOURCE:.c=.o)))
 
+.PHONY: all clean flash fuse install load disasm cpp
+
 # symbolic targets:
 all:	grbl.hex
 
-$(BUILDDIR)/%.o: $(SOURCEDIR)/%.c
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
+$(BUILDDIR)/%.o: $(SOURCEDIR)/%.c | $(BUILDDIR)
 	$(COMPILE) -MMD -MP -c $< -o $@
 
-.S.o:
-	$(COMPILE) -x assembler-with-cpp -c $< -o $(BUILDDIR)/$@
+$(BUILDDIR)/%.o: $(SOURCEDIR)/%.S | $(BUILDDIR)
+	$(COMPILE) -x assembler-with-cpp -c $< -o $@
 # "-x assembler-with-cpp" should not be necessary since this is the default
 # file type for the .S (with capital S) extension. However, upper case
 # characters are not always preserved on Windows. To ensure WinAVR
@@ -96,11 +101,11 @@ grbl.hex: $(BUILDDIR)/main.elf
 # EEPROM and add it to the "flash" target.
 
 # Targets for code debugging and analysis:
-disasm:	main.elf
+disasm:	$(BUILDDIR)/main.elf
 	avr-objdump -d $(BUILDDIR)/main.elf
 
 cpp:
 	$(COMPILE) -E $(SOURCEDIR)/main.c
 
 # include generated header dependencies
--include $(BUILDDIR)/$(OBJECTS:.o=.d)
+-include $(OBJECTS:.o=.d)

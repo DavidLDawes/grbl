@@ -48,7 +48,7 @@ uint8_t serial_get_rx_buffer_count()
 {
   uint8_t rtail = serial_rx_buffer_tail; // Copy to limit multiple calls to volatile
   if (serial_rx_buffer_head >= rtail) { return(serial_rx_buffer_head-rtail); }
-  return (RX_BUFFER_SIZE - (rtail-serial_rx_buffer_head));
+  return (RX_RING_BUFFER - (rtail-serial_rx_buffer_head));
 }
 
 
