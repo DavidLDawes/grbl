@@ -608,6 +608,20 @@ matter, neither substitutes for the other.
 
 Added a CI status badge to `README.md`, linking to the workflow.
 
+**Verified the first real run** end-to-end on GitHub's hosted runners (not
+just locally) via `gh run watch`: both jobs passed, build in 36s, test in 5s.
+That first run flagged `actions/checkout@v4` as targeting a deprecated
+Node.js 20 runtime (GitHub was silently forcing it onto Node 24 as a
+compatibility shim). Checked each action's release notes via `gh api` before
+upgrading, not just the version number: `actions/checkout@v5.0.0` and
+`actions/upload-artifact@v6.0.0` are exactly the "switch this action's
+declared runtime to native Node 24" releases, and neither the intervening
+nor the current major versions (`checkout` v6/v7, `upload-artifact` v7)
+changed or removed any input this workflow uses — `upload-artifact@v7`
+added a new opt-in `archive: false` mode but its default (`true`) matches
+the old zip-upload behavior exactly. Bumped both to `@v7` (the current
+latest for each, confirmed via `gh release list`).
+
 ## Remaining work
 
 Everything below is open. Suggested order, with reasoning. (Numbers below refer
