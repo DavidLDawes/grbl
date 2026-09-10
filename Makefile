@@ -52,7 +52,7 @@ COMPILE = avr-gcc -Wall -Os -DF_CPU=$(CLOCK) -mmcu=$(DEVICE) -I. -ffunction-sect
 
 OBJECTS = $(addprefix $(BUILDDIR)/,$(notdir $(SOURCE:.c=.o)))
 
-.PHONY: all clean flash fuse install load disasm cpp
+.PHONY: all clean flash fuse install load disasm cpp test test-clean
 
 # symbolic targets:
 all:	grbl.hex
@@ -106,6 +106,29 @@ disasm:	$(BUILDDIR)/main.elf
 
 cpp:
 	$(COMPILE) -E $(SOURCEDIR)/main.c
+
+# ---------------------------------------------------------------------------
+# Host-side test harness (test/). Compiles gcode.c, planner.c, and
+# nuts_bolts.c natively (not with avr-gcc) against a stubbed hardware
+# layer, so the harness needs only a host C compiler and libm -- no AVR
+# toolchain, no board. See test/README.md for what it covers and why.
+# ---------------------------------------------------------------------------
+HOSTCC ?= gcc
+TEST_BUILDDIR = test/build
+TEST_BIN = $(TEST_BUILDDIR)/grbl_test
+TEST_SOURCES = grbl/nuts_bolts.c grbl/planner.c grbl/gcode.c \
+               test/grbl_stubs.c test/test_main.c \
+               test/test_nuts_bolts.c test/test_planner.c test/test_gcode.c
+
+test:
+	mkdir -p $(TEST_BUILDDIR)
+	$(HOSTCC) -std=c99 -Wall -Wextra -Wno-implicit-fallthrough -DF_CPU=16000000UL \
+		-I test/avr_shim -I grbl -I test \
+		$(TEST_SOURCES) -o $(TEST_BIN) -lm
+	$(TEST_BIN)
+
+test-clean:
+	rm -f $(TEST_BIN) $(TEST_BIN).exe $(TEST_BUILDDIR)/*.o
 
 # include generated header dependencies
 -include $(OBJECTS:.o=.d)

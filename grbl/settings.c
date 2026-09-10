@@ -202,18 +202,25 @@ uint8_t settings_store_global_setting(uint8_t parameter, float value) {
         // Valid axis setting found.
         switch (set_idx) {
           case 0:
+            // NOTE: Zero steps/mm divides by zero in the planner and in every mm<->step
+            // conversion (system_convert_axis_steps_to_mpos(), etc.), producing inf/NaN
+            // machine positions rather than an error.
+            if (value <= 0.0) { return(STATUS_SETTING_VALUE_OUT_OF_RANGE); }
             #ifdef MAX_STEP_RATE_HZ
               if (value*settings.max_rate[parameter] > (MAX_STEP_RATE_HZ*60.0)) { return(STATUS_MAX_STEP_RATE_EXCEEDED); }
             #endif
             settings.steps_per_mm[parameter] = value;
             break;
           case 1:
+            if (value <= 0.0) { return(STATUS_SETTING_VALUE_OUT_OF_RANGE); }
             #ifdef MAX_STEP_RATE_HZ
               if (value*settings.steps_per_mm[parameter] > (MAX_STEP_RATE_HZ*60.0)) {  return(STATUS_MAX_STEP_RATE_EXCEEDED); }
             #endif
             settings.max_rate[parameter] = value;
             break;
-          case 2: settings.acceleration[parameter] = value*60*60; break; // Convert to mm/min^2 for grbl internal use.
+          case 2:
+            if (value <= 0.0) { return(STATUS_SETTING_VALUE_OUT_OF_RANGE); }
+            settings.acceleration[parameter] = value*60*60; break; // Convert to mm/min^2 for grbl internal use.
           case 3: settings.max_travel[parameter] = -value; break;  // Store as negative for grbl internal use.
         }
         break; // Exit while-loop after setting has been configured and proceed to the EEPROM write call.
@@ -255,7 +262,12 @@ uint8_t settings_store_global_setting(uint8_t parameter, float value) {
         break;
       case 10: settings.status_report_mask = int_value; break;
       case 11: settings.junction_deviation = value; break;
-      case 12: settings.arc_tolerance = value; break;
+      case 12:
+        // NOTE: Zero arc tolerance divides by zero in mc_arc()'s segment count
+        // calculation (sqrt(arc_tolerance*(2*radius-arc_tolerance))), producing
+        // NaN rather than an error.
+        if (value <= 0.0) { return(STATUS_SETTING_VALUE_OUT_OF_RANGE); }
+        settings.arc_tolerance = value; break;
       case 13:
         if (int_value) { settings.flags |= BITFLAG_REPORT_INCHES; }
         else { settings.flags &= ~BITFLAG_REPORT_INCHES; }

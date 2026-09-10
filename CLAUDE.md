@@ -104,7 +104,18 @@ and the include order inside it is order-dependent. Do not reorder it.
 
 ## Testing
 
-There is no test suite and no host-side harness. Verification is:
+`make test` runs a host-side harness (`test/`, see `test/README.md`) that
+compiles `gcode.c`, `planner.c`, and `nuts_bolts.c` — the three modules
+with no hardware-register dependency — natively against a stubbed
+motion_control.c/spindle_control.c/coolant_control.c/report.c/protocol.c/
+system.c/settings.c/jog.c/stepper.c layer, and runs real assertions
+against them. No AVR toolchain or board needed; it's independent of the
+`make`/`make clean`/`make flash` targets. Run it after any change to one
+of those three files, and add a test case alongside any fix to them.
+
+Everything else — `stepper.c`'s ISR above all, plus the rest of the
+hardware-facing modules — still has no automated coverage. For those,
+verification is:
 
 1. Read carefully — this is safety-relevant motion control on real hardware.
 2. Compile for size (`avr-size` output from `make`) and confirm it still fits.

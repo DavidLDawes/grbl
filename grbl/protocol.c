@@ -407,7 +407,13 @@ void protocol_exec_rt_system()
   if (rt_exec) {
     system_clear_exec_motion_overrides(); // Clear all motion override flags.
 
-    uint8_t new_f_override =  sys.f_override;
+    // NOTE: Accumulated in a signed 16-bit type, not uint8_t, so a decrement below
+    // MIN_FEED_RATE_OVERRIDE goes negative instead of wrapping around through 255.
+    // With stock defaults MIN_FEED_RATE_OVERRIDE (10) equals FEED_OVERRIDE_COARSE_INCREMENT
+    // (10), so the wrapped case never arose in practice -- but any config where MIN is
+    // greater than the increment would have had a single "decrease" request clamp to
+    // MAX_FEED_RATE_OVERRIDE instead of MIN, since min() saw a huge wrapped uint8_t value.
+    int16_t new_f_override = sys.f_override;
     if (rt_exec & EXEC_FEED_OVR_RESET) { new_f_override = DEFAULT_FEED_OVERRIDE; }
     if (rt_exec & EXEC_FEED_OVR_COARSE_PLUS) { new_f_override += FEED_OVERRIDE_COARSE_INCREMENT; }
     if (rt_exec & EXEC_FEED_OVR_COARSE_MINUS) { new_f_override -= FEED_OVERRIDE_COARSE_INCREMENT; }
@@ -435,7 +441,9 @@ void protocol_exec_rt_system()
     system_clear_exec_accessory_overrides(); // Clear all accessory override flags.
 
     // NOTE: Unlike motion overrides, spindle overrides do not require a planner reinitialization.
-    uint8_t last_s_override =  sys.spindle_speed_ovr;
+    // Accumulated in int16_t for the same reason as new_f_override above: a decrement
+    // below MIN_SPINDLE_SPEED_OVERRIDE must go negative, not wrap around through 255.
+    int16_t last_s_override = sys.spindle_speed_ovr;
     if (rt_exec & EXEC_SPINDLE_OVR_RESET) { last_s_override = DEFAULT_SPINDLE_SPEED_OVERRIDE; }
     if (rt_exec & EXEC_SPINDLE_OVR_COARSE_PLUS) { last_s_override += SPINDLE_OVERRIDE_COARSE_INCREMENT; }
     if (rt_exec & EXEC_SPINDLE_OVR_COARSE_MINUS) { last_s_override -= SPINDLE_OVERRIDE_COARSE_INCREMENT; }
