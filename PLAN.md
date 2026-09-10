@@ -5,23 +5,26 @@ and future work for this fork of `gnea/grbl` v1.1h (build 20190830).
 
 ## Status
 
-**Every item in §3 "Fixes" is done except 3.10**, which was always scoped as a
-design task rather than a quick fix (see its own entry for why). Commits:
+**Every item in §3 "Fixes" is done except 3.10 and 4.3**, both deliberately
+left open (see their entries for why — 3.10 needs a design pass, 4.3 needs
+real hardware CI can't provide). Commits:
 
 | Commit | What landed |
 |---|---|
 | `3a26f95` | Phase 1 (all of 1.1–1.6); Fixes 2.2, 3.3, 3.6, 3.8, 3.9 |
 | `5c182fc` | Fix 4.1 (host test harness, `test/`); Fixes 3.2, 3.5, 3.7 |
-| *(this session)* | Fixes 3.1, 2.1, 3.4 |
+| `6dff3d6` | Fixes 3.1, 2.1, 3.4 |
+| *(this session)* | Fixes 4.2, 4.4 (`make size`; GitHub Actions CI) |
 
-Firmware still builds clean on the real AVR toolchain, `make test` still passes
-39/39, and **the tree now compiles with zero warnings** (2.1 removed the last
-one). Current baseline: see §1.4.
+Firmware still builds clean on the real AVR toolchain, `make test` still
+passes 39/39, and the tree still compiles with zero warnings. CI now runs
+both automatically on every push/PR to `main` — see the badge at the top of
+`README.md`. Current baseline: see §1.4.
 
-**What's left** is one deferred design task (3.10), two small validation
-tasks (4.2, 4.3), and everything in §4 "Upgrades and new features" — which was
-always intended as post-fix work. Full detail and suggested order are at the
-end of §3, in **Remaining work**.
+**What's left** is one deferred design task (3.10), one validation task that
+needs a real board (4.3), and everything in §4 "Upgrades and new features" —
+which was always intended as post-fix work. Full detail and suggested order
+are at the end of §3, in **Remaining work**.
 
 ---
 
@@ -566,18 +569,44 @@ This made Fixes 3.2, 3.5, and 3.7 verifiable rather than merely plausible
 "don't just read it, run it" discipline this harness established, even though
 `protocol.c` and `motion_control.c` aren't in the harness's own compiled set).
 
-**4.2 — Size regression check.** Not done.
-Add a `make size` (or fold into `make test`) target that fails if `text`
-exceeds a threshold. With 804 bytes of headroom on an old-bootloader Nano
-*now* (was 958 before this round of fixes), an unnoticed 1 KB growth is a
-broken release. See Remaining work.
+**4.2 — Size regression check.** ✅ DONE
+Added `make size`: builds `$(BUILDDIR)/main.elf` if needed, parses
+`avr-size`'s berkeley-format output, and fails (nonzero exit) if `text`
+exceeds `MAX_FLASH_BYTES` (default 30,500 — 220 bytes below the hard
+old-Nano ceiling of 30,720, 584 bytes above the current 29,916 baseline) or
+`bss` exceeds `MAX_SRAM_BYTES` (default 1,800). Both are overridable on the
+command line for a deliberate, confirmed-fits-your-board size increase.
+**Verified it actually fails**: ran `make size MAX_FLASH_BYTES=29000
+MAX_SRAM_BYTES=1000` against the real current build and confirmed both
+checks fire with a nonzero exit code, not just that the default (passing)
+case looks right. Wired into CI (see below) so it runs on every push and PR.
 
-**4.3 — Hardware smoke test.** Not done, and now the most important open item.
+**4.3 — Hardware smoke test.** Not done, and still the most important open item.
 Document a fixed sequence — home, jog each axis, run a known square, feed
 hold, resume, **Ctrl-X mid-cycle, a hard limit trip mid-cycle, a hard limit
 trip during homing** (the three scenarios Fix 3.1 needs bench-verified), probe
 — to run against every firmware change before flashing a machine that has a
-tool in it. See Remaining work for why this now outranks everything else.
+tool in it. CI (below) cannot substitute for this: it proves the firmware
+compiles and the parser/planner logic is correct, not that a real board
+behaves correctly. See Remaining work for why this still outranks everything
+else that's left.
+
+**4.4 — Continuous integration.** ✅ DONE (`.github/workflows/ci.yml`)
+Two jobs, both on `push`/`pull_request` to `main` and manually triggerable:
+- **Build (AVR)**: installs `gcc-avr`/`avr-libc`/`binutils-avr` via `apt`,
+  runs `make`, then `make size` (Fix 4.2, above) as a hard gate, then
+  uploads `grbl.hex` as a build artifact.
+- **Host test harness**: runs `make test` — no AVR toolchain needed, since
+  it's a native host build (Fix 4.1).
+
+Deliberately **not** a substitute for Fix 4.3: nothing here touches real
+hardware, so it proves the firmware compiles, fits its flash/SRAM budget,
+and the parser/planner logic passes its assertions — not that motion,
+homing, or the abort path behave correctly on an actual board. A green CI
+run and a bench-tested Fix 3.1 are two different kinds of confidence; both
+matter, neither substitutes for the other.
+
+Added a CI status badge to `README.md`, linking to the workflow.
 
 ## Remaining work
 
@@ -586,21 +615,24 @@ to the Phase 3/Phase 4 item numbers above, e.g. "Fix 4.3" — not to the
 separately-numbered subsections of the "Upgrades and new features" section,
 which are referred to by name to avoid confusion between the two.)
 
+CI (Fix 4.4, `.github/workflows/ci.yml`) is live: `make` and `make size`
+(Fix 4.2) run on every push/PR to `main`, plus `make test` (Fix 4.1). That
+closes the two items that used to top this list. What's left:
+
 1. **Bench-test Fix 3.1 on real hardware — this doubles as Fix 4.3 (hardware
    smoke test).** This is the only fix in the whole plan verified by static
    and disassembly analysis alone, specifically because it touches the abort
    path — this plan flagged it medium-high risk from the start, and that risk
-   hasn't been retired by reasoning, only reduced. Do this before trusting 3.1
-   on a machine with a workpiece in it: Ctrl-X during a cycle, a hard limit
-   trip during a cycle, and a hard limit trip during homing. Write the
-   sequence down while doing it — home, jog each axis, a known square, feed
-   hold, resume, probe, plus the three abort-path cases above — and Fix 4.3 is
-   done at the same time.
-2. **Fix 4.2, a `make size` (or `make test`-integrated) regression guard.**
-   Cheap, mechanical, and the flash headroom that makes every future fix's
-   "cost" column meaningful (804 bytes on an old Nano) is exactly the kind of
-   number that erodes silently without one.
-3. **Fix 3.10, the `serial_write()` design task.** No longer urgent-by-omission
+   hasn't been retired by reasoning, only reduced. **CI cannot do this part**
+   — it builds and tests on a GitHub-hosted runner with no board attached, so
+   a compile-clean, test-passing run says nothing about real interrupt timing
+   or actual stepper/limit-switch behavior. Do this before trusting 3.1 on a
+   machine with a workpiece in it: Ctrl-X during a cycle, a hard limit trip
+   during a cycle, and a hard limit trip during homing. Write the sequence
+   down while doing it — home, jog each axis, a known square, feed hold,
+   resume, probe, plus the three abort-path cases above — and Fix 4.3 is done
+   at the same time.
+2. **Fix 3.10, the `serial_write()` design task.** No longer urgent-by-omission
    now that everything else in Phase 3 is closed, but it's the last known
    correctness gap and was explicitly deferred rather than declined. Needs a
    design pass (see its entry for the re-entrancy hazard to avoid), not a
@@ -608,7 +640,7 @@ which are referred to by name to avoid confusion between the two.)
    (Fix 4.1) is extended enough to cover `protocol.c`/`serial.c` interaction
    if that's feasible, since this is exactly the kind of subtle
    interrupt/main-loop interaction the harness exists to catch.
-4. **The "Upgrades and new features" section below**, in the order already
+3. **The "Upgrades and new features" section below**, in the order already
    laid out there: Cheap wins first, informed by whether `make test` coverage
    can be extended alongside each one; Moderate features next; read Things
    that look small but aren't before proposing anything in that category; and
@@ -692,7 +724,7 @@ export PATH="$LOCALAPPDATA/Arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3
 export PATH="$LOCALAPPDATA/Arduino15/packages/arduino/tools/avrdude/6.3.0-arduino17/bin:$PATH"
 
 make clean && make          # expect 29916 text / 1633 bss, zero warnings
-avr-size --format=berkeley build/main.elf
+make size                   # same numbers, plus a pass/fail against the flash/SRAM budget
 make disasm | less          # or: avr-objdump -d build/main.elf | less
 
 make test                   # host test harness: expect 39/39, no AVR toolchain needed
@@ -702,11 +734,19 @@ avrdude -C "$LOCALAPPDATA/Arduino15/packages/arduino/tools/avrdude/6.3.0-arduino
         -p atmega328p -c arduino -P COM3 -b 115200 -D -U flash:w:grbl.hex:i
 ```
 
+CI (`.github/workflows/ci.yml`) runs `make` + `make size` and `make test` as
+two parallel jobs on every push/PR to `main` — same commands as above, on a
+fresh Ubuntu runner with `gcc-avr`/`avr-libc`/`binutils-avr` from `apt`
+instead of this machine's Arduino-IDE-bundled toolchain. `gh run list` /
+`gh run watch` (if you have `gh` installed and authenticated) shows live
+status without leaving the terminal.
+
 | Doc | Contents |
 |---|---|
 | `README.md` | Overview, pin map, configuration options |
 | `CLAUDE.md` | Architecture rules and conventions for code changes |
 | `test/README.md` | Host test harness: scope, what's stubbed, how to add a test |
+| `.github/workflows/ci.yml` | CI: build + size gate + host test harness on every push/PR |
 | `doc/markdown/commands.md` | `$` command reference |
 | `doc/markdown/settings.md` | `$n=` setting reference |
 | `doc/markdown/interface.md` | Status report and message format |

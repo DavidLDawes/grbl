@@ -52,7 +52,7 @@ COMPILE = avr-gcc -Wall -Os -DF_CPU=$(CLOCK) -mmcu=$(DEVICE) -I. -ffunction-sect
 
 OBJECTS = $(addprefix $(BUILDDIR)/,$(notdir $(SOURCE:.c=.o)))
 
-.PHONY: all clean flash fuse install load disasm cpp test test-clean
+.PHONY: all clean flash fuse install load disasm cpp size test test-clean
 
 # symbolic targets:
 all:	grbl.hex
@@ -106,6 +106,38 @@ disasm:	$(BUILDDIR)/main.elf
 
 cpp:
 	$(COMPILE) -E $(SOURCEDIR)/main.c
+
+# ---------------------------------------------------------------------------
+# Flash/SRAM size regression guard (PLAN.md Fix 4.2). Budget chosen to still
+# leave real margin on the tightest supported target -- an old-bootloader
+# Nano has only 30720 bytes of flash available (32768 - 2048 for the
+# bootloader) -- while catching a silent size creep well before it matters.
+# Current baseline is ~29916 bytes text / 1633 bytes bss; see PLAN.md
+# section 1.4 for the full Uno-vs-old-Nano budget breakdown. Override on the
+# command line (e.g. `make size MAX_FLASH_BYTES=31000`) if a deliberate
+# feature addition needs more room and you've confirmed it still fits your
+# actual target board.
+# ---------------------------------------------------------------------------
+MAX_FLASH_BYTES ?= 30500
+MAX_SRAM_BYTES  ?= 1800
+
+size: $(BUILDDIR)/main.elf
+	@SIZES=$$(avr-size --format=berkeley $(BUILDDIR)/main.elf | tail -1); \
+	TEXT=$$(echo "$$SIZES" | awk '{print $$1}'); \
+	DATA=$$(echo "$$SIZES" | awk '{print $$2}'); \
+	BSS=$$(echo "$$SIZES" | awk '{print $$3}'); \
+	echo "text=$$TEXT data=$$DATA bss=$$BSS  (budget: text<=$(MAX_FLASH_BYTES) bss<=$(MAX_SRAM_BYTES))"; \
+	FAIL=0; \
+	if [ "$$TEXT" -gt "$(MAX_FLASH_BYTES)" ]; then \
+	  echo "FAIL: flash usage $$TEXT bytes exceeds budget of $(MAX_FLASH_BYTES) bytes"; \
+	  FAIL=1; \
+	fi; \
+	if [ "$$BSS" -gt "$(MAX_SRAM_BYTES)" ]; then \
+	  echo "FAIL: SRAM usage $$BSS bytes exceeds budget of $(MAX_SRAM_BYTES) bytes"; \
+	  FAIL=1; \
+	fi; \
+	if [ "$$FAIL" -eq 1 ]; then exit 1; fi; \
+	echo "OK: within budget"
 
 # ---------------------------------------------------------------------------
 # Host-side test harness (test/). Compiles gcode.c, planner.c, and

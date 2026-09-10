@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Build firmware (AVR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install AVR toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-avr avr-libc binutils-avr
+
+      - name: Build
+        run: make
+
+      - name: Check flash/SRAM size budget
+        run: make size
+
+      - name: Upload grbl.hex
+        uses: actions/upload-artifact@v4
+        with:
+          name: grbl-hex
+          path: grbl.hex
+          if-no-files-found: error
+
+  test:
+    name: Host test harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run host test harness
+        run: make test

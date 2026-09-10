@@ -2,6 +2,8 @@
 
 # Grbl v1.1h
 
+[![CI](https://github.com/DavidLDawes/grbl/actions/workflows/ci.yml/badge.svg)](https://github.com/DavidLDawes/grbl/actions/workflows/ci.yml)
+
 Grbl is a high-performance, open-source G-code interpreter and CNC motion
 controller that runs entirely on an Arduino with an ATmega328P (Uno,
 Duemilanove, Nano, Micro). It reads standards-compliant G-code over a serial

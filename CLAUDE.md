@@ -74,6 +74,7 @@ Most users build via the Arduino IDE instead, using
 | `doc/script/` | Python streaming scripts (`stream.py`, `simple_stream.py`) |
 | `test/` | Host-side test harness (`make test`) — see `test/README.md` and the Testing section below |
 | `PLAN.md` | Fix/feature backlog with status tracking — check `## Status` before starting new work |
+| `.github/workflows/ci.yml` | CI: build + `make size` gate + `make test`, on every push/PR to `main` |
 
 `grbl/grbl.h` is the single include hub — every `.c` includes only `"grbl.h"`,
 and the include order inside it is order-dependent. Do not reorder it.
@@ -141,6 +142,17 @@ system.c/settings.c/jog.c/stepper.c layer, and runs real assertions
 against them. No AVR toolchain or board needed; it's independent of the
 `make`/`make clean`/`make flash` targets. Run it after any change to one
 of those three files, and add a test case alongside any fix to them.
+
+`make size` fails (nonzero exit) if the build exceeds a flash/SRAM budget —
+see the comment above the target in the `Makefile` for the exact numbers and
+reasoning. CI (`.github/workflows/ci.yml`) runs `make` + `make size` and
+`make test` as two jobs on every push/PR to `main`, on a fresh Ubuntu runner
+with `apt`-installed `gcc-avr`/`avr-libc`/`binutils-avr` — a different,
+independently-verified toolchain from the Arduino-IDE-bundled one this
+machine uses. A green CI run proves compile correctness, the size budget,
+and the parser/planner assertions — it does **not** touch real hardware, so
+it's not a substitute for the bench-test steps below when a change touches
+`stepper.c`'s ISR, `motion_control.c`, or anything else interrupt/timing-related.
 
 Everything else — `stepper.c`'s ISR above all, plus the rest of the
 hardware-facing modules — still has no automated coverage. For those,
